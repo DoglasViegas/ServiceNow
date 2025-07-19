@@ -1,11 +1,428 @@
 UI ACTION-send to eletronic signature
+var httpResponseStatus = 200;
 
+var signatureFields = [
+    'u_assinatura_um',
+    'u_assinatura_dois',
+    'u_assinatura_tres',
+    'u_assinatura_quatro',
+    'u_assinatura_cinco',
+    'u_assinatura_seis',
+    'u_assinatura_sete',
+    'u_assinatura_oito',
+    'u_assinatura_nove',
+    'u_assinatura_dez'
+];
+
+var quantidadeAssinaturas = current.getValue('u_quantidade_de_assinaturas');
+quantidadeAssinaturas = parseInt(quantidadeAssinaturas, 10);
+
+if (isNaN(quantidadeAssinaturas) || quantidadeAssinaturas <= 0) {
+    gs.addErrorMessage('O campo "Quantidade de Assinaturas" deve ser um número maior que zero.');
+    httpResponseStatus = 400;
+}else {
+    for (var i = 0; i < quantidadeAssinaturas; i++) {
+        var fieldName = signatureFields[i];
+        var fieldValue = (current.getValue(fieldName) + '').trim();
+
+        if (fieldValue.nil()) {
+            gs.addErrorMessage('O campo de assinatura "' + fieldName + '" é obrigatório, pois a "Quantidade de Assinaturas" exige ' + (i + 1) + ' assinaturas.');
+            httpResponseStatus = 400; // Define o status como erro 
+        }
+    }
+}
+
+if (current.u_d4sign_icp_subscription.nil()) {
+    gs.addErrorMessage('Para realizar o envio do documento para assinatura, por gentileza preencha o campo "Exige Assinatura ICP Brasil?" da guia "Assinatura Eletrônica".');
+    httpResponseStatus = 400;
+}
+
+// Verifica se o email do signee está preenchido 
+// if (signeeEmail.nil()) {
+//     gs.addErrorMessage(gs.getMessage('D4Sign Signee doesn`t have an e-mail address'));
+//     httpResponseStatus = 400;
+// }
+
+// Se todas as verificações anteriores passaram sem erros, chama os métodos necessários
+if (httpResponseStatus == 200) {
+    httpResponseStatus = new global.tbgD4SignGAT().sendD4File(current);
+	current.update();
+}
+
+if (httpResponseStatus == 200) {
+    httpResponseStatus = new global.tbgD4SignGAT().sendD4Signee(current);
+}
+
+if (httpResponseStatus == 200) {
+    httpResponseStatus = new global.tbgD4SignGAT().sendD4ToSign(current);
+}
+
+if (httpResponseStatus == 200) {
+    httpResponseStatus = new global.tbgD4SignGAT().getD4SignStatus(current);
+}
+
+// Se todos os métodos foram executados com sucesso, exibe uma mensagem informativa
+if (httpResponseStatus == 200) {
+    gs.addInfoMessage(gs.getMessage('Documento enviado com sucesso para assinatura na D4Sign.'));
+}
+action.setRedirectURL(current);
 
 
 UI ACTION- check eletronic signature
 
+httpResponseStatus = new global.tbgD4SignGAT().getD4SignStatus(current);
+
+action.setRedirectURL(current);]
 
 
 
 script INCLUDE
+var tbgD4SignGAT = Class.create();
+tbgD4SignGAT.prototype = {
+    initialize: function() {
+
+    },
+    sendD4File: function(current) {
+        try {
+            var request = new sn_ws.RESTMessageV2();
+            request.setHttpMethod('post');
+
+            var safe = gs.getProperty('d4SignSafe');
+            var url = gs.getProperty('d4SignUrl');
+            var token = gs.getProperty('d4SignToken');
+            var cryptKey = gs.getProperty('d4SignCryptKey');
+
+
+            request.setEndpoint(url + '/documents/' + safe + '/uploadbinary');
+
+            request.setRequestHeader('Content-Type', 'application/json');
+            request.setRequestHeader('tokenAPI', token);
+            request.setRequestHeader('cryptKey', cryptKey);
+
+            var file_name = current.u_number.toString().replace(/\s/g, '').replace(/\//g, '-') + '.pdf';
+
+
+            var file = {
+                name: file_name,
+                mime_type: 'application/pdf',
+                base64_binary_file: ''
+            };
+
+            var grSysAttachment = new GlideRecord('sys_attachment');
+            grSysAttachment.addQuery('sys_id', current.u_documento_emitido_arquivo_pdf);
+            grSysAttachment.query();
+            if (grSysAttachment.next()) {
+                var gsaAttachmentStream = new GlideSysAttachmentInputStream(grSysAttachment.sys_id.toString());
+                var byteArrayOutputStream = new Packages.java.io.ByteArrayOutputStream();
+
+                // Escreve o fluxo no ByteArrayOutputStream
+                gsaAttachmentStream.writeTo(byteArrayOutputStream);
+                byteArrayOutputStream.close();
+
+                // Codifica a saída em base64
+                var base64Image = GlideStringUtil.base64Encode(byteArrayOutputStream.toByteArray());
+                file.base64_binary_file = base64Image;
+            }
+
+            var body = JSON.stringify(file);
+            request.setRequestBody(body);
+
+
+            // Executa a solicitação REST
+            response = request.execute();
+            httpResponseStatus = response.getStatusCode();
+            jsonResponse = response.getBody();
+            responseObjJ = JSON.parse(jsonResponse);
+
+            if (httpResponseStatus != 200) {
+                gs.addErrorMessage("Erro ao realizar o envio do documento para assinatura. Por gentileza verificar o arquivo presente no campo 'Documento Emitido (arquivo.pdf)'. Código de erro: " + httpResponseStatus);
+                gs.addErrorMessage(responseObjJ.message);
+                return httpResponseStatus; // Retorna o código de status HTTP para indicar erro
+            } else {
+                current.u_d4sign_uuid = responseObjJ.uuid;
+                current.update();
+                return httpResponseStatus; // Retorna o código de status HTTP da resposta bem-sucedida
+            }
+        } catch (ex) {
+            var message = ex.getMessage();
+            gs.info(message);
+            return 500; // Retorna um código de status HTTP para indicar erro interno do servidor
+        }
+    },
+
+
+    sendD4Signee: function(current) {
+        try {
+            var request = new sn_ws.RESTMessageV2();
+            request.setHttpMethod('post');
+
+            var url = gs.getProperty('d4SignUrl');
+            var token = gs.getProperty('d4SignToken');
+            var cryptKey = gs.getProperty('d4SignCryptKey');
+
+            request.setEndpoint(url + '/documents/' + current.u_d4sign_uuid + '/createlist');
+
+            request.setRequestHeader('Content-Type', 'application/json');
+            request.setRequestHeader('tokenAPI', token);
+            request.setRequestHeader('cryptKey', cryptKey);
+
+            var icp = current.u_d4sign_icp_subscription;
+            if (icp == 0) {
+                icp = '0';
+            } else {
+                icp = '1';
+            }
+
+            var emailValidationRegex = /^(\s?[^\s,@]+@[^\s,@]+\.[^\s,@]+\s*[,]?\s*)*([^\s,@]+@[^\s,@]+\.[^\s,@]+)?$/;
+
+            var signersArray = [];
+            var signatureFields = [
+                'u_assinatura_um',
+                'u_assinatura_dois',
+                'u_assinatura_tres',
+                'u_assinatura_quatro',
+                'u_assinatura_cinco',
+                'u_assinatura_seis',
+                'u_assinatura_sete',
+                'u_assinatura_oito',
+                'u_assinatura_nove',
+                'u_assinatura_dez'
+            ];
+
+            for (var i = 0; i < signatureFields.length; i++) {
+                var fieldName = signatureFields[i];
+                var signeeEmail = (current[fieldName] + '').trim();
+
+                if (signeeEmail && signeeEmail !== 'null' && signeeEmail !== 'undefined') {
+                    if (!emailValidationRegex.test(signeeEmail)) {
+                        gs.error('D4Sign Integration: E-mail inválido encontrado no campo ' + fieldName + ': "' + signeeEmail + '". Este signatário será ignorado.');
+                        hasInvalidEmail = true;
+                        continue;
+                    } else {
+                        var signer = {
+                            "email": signeeEmail,
+                            "act": "1",
+                            "foreign": "0",
+                            "certificadoicpbr": icp,
+                            "after_position": String(i + 1)
+                        };
+                        signersArray.push(signer);
+                    }
+                }
+            }
+            // Se o array estiver vazio não envia a requisição para o D4Sign.
+            if (signersArray.length === 0) {
+                var msg = 'D4Sign Integration: Nenhum signatário válido encontrado para enviar para o D4Sign. Requisição não enviada.';
+                gs.error(msg);
+                //204 No Content
+                return 240;
+            }
+
+            // Objeto de dados para o corpo da requisição REST
+            var data = {
+                "signers": signersArray
+            };
+
+
+            //var signeeEmail = current.u_d4sign_signee.email + '';
+
+            // var data = {
+            //     "signers": [{
+            //         "email": signeeEmail,
+            //         "act": "1",
+            //         "foreign": "0",
+            //         "certificadoicpbr": icp
+            //     }]
+            // };
+
+            var body = JSON.stringify(data);
+            request.setRequestBody(body);
+
+            response = request.execute();
+            var httpResponseStatus = response.getStatusCode();
+            var jsonResponse = response.getBody();
+            var responseObjJ = JSON.parse(jsonResponse);
+
+            if (httpResponseStatus != 200) {
+                gs.addErrorMessage("HTTP response status_code:  " + httpResponseStatus);
+                gs.addErrorMessage(responseObjJ.message);
+            }
+
+        } catch (ex) {
+            var message = ex.getMessage();
+            gs.info(message);
+            return 500;
+        }
+
+        return httpResponseStatus;
+    },
+
+
+    sendD4ToSign: function(current) {
+        try {
+            var request = new sn_ws.RESTMessageV2();
+            request.setHttpMethod('post');
+
+            var url = gs.getProperty('d4SignUrl');
+            var token = gs.getProperty('d4SignToken');
+            var cryptKey = gs.getProperty('d4SignCryptKey');
+
+            request.setEndpoint(url + '/documents/' + current.u_d4sign_uuid + '/sendtosigner');
+
+            request.setRequestHeader('Content-Type', 'application/json');
+            request.setRequestHeader('tokenAPI', token);
+            request.setRequestHeader('cryptKey', cryptKey);
+
+            var data = {
+                "message": "TBG GAT",
+                "skip_email": "0",
+                "workflow": "1"
+            };
+
+
+
+
+            var body = JSON.stringify(data);
+            request.setRequestBody(body);
+
+            response = request.execute();
+            httpResponseStatus = response.getStatusCode();
+            jsonResponse = response.getBody();
+            responseObjJ = JSON.parse(jsonResponse);
+
+            if (httpResponseStatus != 200) {
+                gs.addErrorMessage("HTTP response status_code:  " + httpResponseStatus);
+                gs.addErrorMessage(responseObjJ.message);
+            }
+
+
+        } catch (ex) {
+            var message = ex.getMessage();
+            gs.info(message);
+        }
+        return httpResponseStatus;
+    },
+
+
+    getD4SignStatus: function(current) {
+        try {
+            var request = new sn_ws.RESTMessageV2();
+            var url = gs.getProperty('d4SignUrl');
+            var token = gs.getProperty('d4SignToken');
+            var cryptKey = gs.getProperty('d4SignCryptKey');
+
+
+            request.setHttpMethod('get');
+            request.setEndpoint(url + '/documents/' + current.u_d4sign_uuid);
+            request.setRequestHeader('tokenAPI', token);
+            request.setRequestHeader('cryptKey', cryptKey);
+
+            var response = request.execute();
+            var httpResponseStatus = response.getStatusCode();
+            var jsonResponse = response.getBody();
+            var responseObjJ = JSON.parse(jsonResponse);
+
+            if (httpResponseStatus != 200) {
+                gs.addErrorMessage("HTTP response status_code: " + httpResponseStatus);
+                gs.addErrorMessage(responseObjJ.message);
+                return httpResponseStatus;
+            } else {
+                current.setValue('u_d4sign_state', responseObjJ[0].statusId);
+                current.update();
+                if (responseObjJ[0].statusId === '3') {
+                    gs.addInfoMessage('O documento permanece com status "Aguardando Assinaturas" na D4Sign.');
+                }
+                if (responseObjJ[0].statusId === '6') {
+                    gs.addInfoMessage('O documento foi cancelado na D4Sign.');
+                }
+
+                // Verifica se o documento está assinado dentro da função
+                if (responseObjJ[0].statusId === '4') {
+                    this.downloadAndAttachDocument(current);
+                    gs.addInfoMessage('O documento foi assinado e anexado ao campo "Documento Assinado Aprovador"');
+                }
+                return httpResponseStatus;
+            }
+        } catch (ex) {
+            var message = ex.getMessage();
+            gs.info(message);
+            return 500; // Indica um erro interno do servidor
+        }
+    },
+
+
+    downloadAndAttachDocument: function(current) {
+        try {
+            // Primeira requisição para obter a URL de download
+            var initialRequest = new sn_ws.RESTMessageV2();
+            var url = gs.getProperty('d4SignUrl');
+            var token = gs.getProperty('d4SignToken');
+            var cryptKey = gs.getProperty('d4SignCryptKey');
+
+
+            initialRequest.setHttpMethod('post');
+            initialRequest.setEndpoint(url + '/documents/' + current.u_d4sign_uuid + '/download');
+            initialRequest.setRequestHeader('Content-Type', 'application/json');
+            initialRequest.setRequestHeader('tokenAPI', token);
+            initialRequest.setRequestHeader('cryptKey', cryptKey);
+
+            var requestBody = {
+                type: "pdfa",
+                language: "pt",
+                encoding: false
+            };
+            initialRequest.setRequestBody(JSON.stringify(requestBody));
+
+            var initialResponse = initialRequest.execute();
+            var initialResponseStatus = initialResponse.getStatusCode();
+
+            if (initialResponseStatus === 200) {
+                var initialResponseData = JSON.parse(initialResponse.getBody());
+                var downloadUrl = initialResponseData.url;
+
+                // Segunda requisição para fazer download e anexar o documento
+                var downloadRequest = new sn_ws.RESTMessageV2();
+                downloadRequest.setHttpMethod('get');
+                downloadRequest.setEndpoint(downloadUrl);
+                var fileName = current.u_number + "_assinado.pdf";
+
+                downloadRequest.saveResponseBodyAsAttachment(current.getTableName(), current.getUniqueValue(), fileName);
+                var downloadResponse = downloadRequest.execute();
+                var downloadResponseStatus = downloadResponse.getStatusCode();
+
+                if (downloadResponseStatus === 200) {
+                    gs.info('Documento anexado com sucesso ao registro.');
+
+                    // Consulta para encontrar o sys_id do anexo
+                    var attachmentGR = new GlideRecord('sys_attachment');
+                    attachmentGR.addQuery('table_name', current.getTableName());
+                    attachmentGR.addQuery('table_sys_id', current.getUniqueValue());
+                    attachmentGR.addQuery('file_name', fileName);
+                    attachmentGR.query();
+                    if (attachmentGR.next()) {
+                        // Atualizar o campo 'u_documento_assinado_aprovador' com o sys_id do anexo
+                        current.u_documento_assinado_aprovador = attachmentGR.sys_id.toString();
+                        current.update();
+                        gs.info("Campo 'u_documento_assinado_aprovador' atualizado com sucesso com sys_id: " + attachmentGR.sys_id);
+                    } else {
+                        gs.error("Anexo não encontrado após download.");
+                    }
+                } else {
+                    gs.addErrorMessage('Erro ao fazer download do documento: HTTP response status_code: ' + downloadResponseStatus);
+                }
+            } else {
+                gs.addErrorMessage('Erro ao obter a URL de download: HTTP response status_code: ' + initialResponseStatus);
+            }
+        } catch (ex) {
+            var message = ex.getMessage();
+            gs.error(message);
+            return 500; // Retorna um código de status HTTP para indicar erro interno do servidor
+        }
+    },
+
+
+
+    type: 'tbgD4SignGAT'
+};
+
 
