@@ -1,0 +1,48 @@
+// ======================================================================================
+// SCRIPT DE BACKGROUND PARA EXCLUSÃO DE TODOS OS REGISTROS DA TABELA
+// Tabela de destino: x_data7_disasters_areas_of_activity
+// ======================================================================================
+
+var TABLE_NAME = 'x_data7_disasters_areas_of_activity';
+
+// ATENÇÃO: Altere esta variável para 'true' SOMENTE se tiver certeza 
+// de que deseja EXCLUIR TODOS os registros da tabela acima.
+var DO_DELETE = false; 
+
+gs.info("Iniciando o processo de exclusão de registros da tabela: " + TABLE_NAME);
+
+if (!DO_DELETE) {
+    gs.warn("### MODO DE SIMULAÇÃO ATIVO. NENHUM DADO SERÁ EXCLUÍDO. ###");
+    gs.info("Para executar a exclusão, altere a variável 'DO_DELETE' para 'true'.");
+}
+
+var gr = new GlideRecord(TABLE_NAME);
+gr.query();
+
+var deleteCount = 0;
+
+if (gr.getRowCount() === 0) {
+    gs.info("Não há registros para excluir na tabela: " + TABLE_NAME);
+} else {
+    gs.info("Total de registros encontrados para exclusão: " + gr.getRowCount());
+    
+    // Processamento da exclusão
+    while (gr.next()) {
+        if (DO_DELETE) {
+            // Se DO_DELETE for true, executa a exclusão
+            gr.deleteRecord();
+            deleteCount++;
+        } else {
+            // Se DO_DELETE for false, apenas simula
+            deleteCount++;
+        }
+    }
+}
+
+// Relatório final
+if (DO_DELETE) {
+    gs.info("Processo de exclusão concluído.");
+    gs.info("Total de registros excluídos da tabela " + TABLE_NAME + ": " + deleteCount);
+} else {
+    gs.info("Simulação concluída. Se executado, " + deleteCount + " registros seriam excluídos.");
+}
